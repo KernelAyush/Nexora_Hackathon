@@ -7,7 +7,6 @@ import streamlit as st
 import os
 import tempfile
 from src.parser import parse_jd, parse_resume
-from src.normalizer import normalize_resume
 from src.jd_analyzer import analyze_jd
 from src.ranking import rank_candidates
 from src.explanations import top_n_explanations, answer_ranking_question
