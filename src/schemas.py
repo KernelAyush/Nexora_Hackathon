@@ -4,6 +4,8 @@ THE SHARED DATA CONTRACT. Read this before writing any integration code.
 We use plain dicts, not classes - zero setup cost for P2/P3, easy to print,
 easy to json.dumps for debugging, easy to feed into Streamlit directly.
 """
+Candidate = dict
+JobDescription = dict
 
 REQUIRED_CANDIDATE_FIELDS = [
     "id", "name", "raw_text", "normalized_text",
