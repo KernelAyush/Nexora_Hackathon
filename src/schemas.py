@@ -1,70 +1,73 @@
 """
-schemas.py
-==========
-The shared data contract between P2 (this module's owner), P1 (matching/
-ranking/scoring), and P3 (UI/chat). Nobody outside this file should need
-to guess what a "candidate" or "jd" dict looks like — import the builder
-functions below instead of hand-rolling dicts elsewhere in the codebase.
+THE SHARED DATA CONTRACT. Read this before writing any integration code.
 
-These are plain dicts (not classes) on purpose: fastest to pass around,
-trivially JSON-serializable for caching/demo, and every teammate's AI
-assistant can read a dict literal without extra explanation.
+We use plain dicts, not classes - zero setup cost for P2/P3, easy to print,
+easy to json.dumps for debugging, easy to feed into Streamlit directly.
 """
 
-from typing import List, Dict, Optional, TypedDict
+REQUIRED_CANDIDATE_FIELDS = [
+    "id", "name", "raw_text", "normalized_text",
+    "skills", "experience", "education", "projects",
+]
 
 
-class DateRange(TypedDict):
-    start: str   # "YYYY-MM" or "unknown"
-    end: str     # "YYYY-MM" or "present" or "unknown"
-    raw: str     # original text, kept for debugging/explanations
-
-
-class Candidate(TypedDict):
-    id: str                      # e.g. "candidate_01" (derived from filename)
-    name: str                    # best-guess human name, falls back to id
-    source_file: str             # original filename
-    raw_text: str                # untouched extracted PDF text
-    normalized_text: str         # cleaned/whitespace-normalized full text
-    sections: Dict[str, str]     # e.g. {"experience": "...", "skills": "...", "education": "...", "projects": "..."}
-    skills: List[str]            # deduplicated, canonicalized skill names
-    experience: List[str]        # bullet-ish lines pulled from the experience section
-    education: List[str]         # lines pulled from the education section
-    projects: List[str]          # lines pulled from the projects section
-    dates: List[DateRange]       # every date range found anywhere in the resume
-    parse_ok: bool                # False if this resume failed to parse cleanly
-    parse_error: Optional[str]   # populated when parse_ok is False
-
-
-class JobDescription(TypedDict):
-    source_file: str
-    raw_text: str
-    normalized_text: str
-    role_title: str
-    required_skills: List[str]     # canonicalized
-    preferred_skills: List[str]    # canonicalized
-    experience_requirement: Optional[str]   # e.g. "0-1 years" (raw matched text)
-    education_requirement: Optional[str]    # raw matched text, if any
-    responsibilities: List[str]    # bullet-ish lines from a responsibilities/role section
-    sections: Dict[str, str]
-
-
-def empty_candidate(cand_id: str, source_file: str) -> Candidate:
-    """Used when a resume fails to parse, so downstream code (P1's ranking
-    loop) never has to special-case a missing candidate — it just sees
-    parse_ok=False and can decide to skip/score-zero/flag it."""
+def empty_candidate(candidate_id: str, name: str = "") -> dict:
+    """P2: start from this and fill it in. Every field must exist even if
+    empty - the matcher assumes the keys are present."""
     return {
-        "id": cand_id,
-        "name": cand_id,
-        "source_file": source_file,
-        "raw_text": "",
-        "normalized_text": "",
-        "sections": {},
-        "skills": [],
-        "experience": [],
-        "education": [],
-        "projects": [],
-        "dates": [],
-        "parse_ok": False,
-        "parse_error": None,
+        "id": candidate_id,
+        "name": name,
+        "raw_text": "",          # full extracted text, unmodified
+        "normalized_text": "",   # lowercased / whitespace-cleaned full text
+        "skills": [],            # list[str] - explicit skills you detected (best effort is fine)
+        "experience": [],        # list[str] - one entry per role/bullet, free text
+        "education": [],         # list[str]
+        "projects": [],          # list[str]
     }
+
+
+def validate_candidate(candidate: dict) -> list:
+    """Returns a list of problems (empty = valid). Never raises - a bad
+    candidate should degrade gracefully, not crash the whole ranking run."""
+    problems = []
+    for field in REQUIRED_CANDIDATE_FIELDS:
+        if field not in candidate:
+            problems.append(f"missing field: {field}")
+    if not candidate.get("normalized_text") and not candidate.get("raw_text"):
+        problems.append("no text at all (raw_text and normalized_text both empty)")
+    return problems
+
+
+def empty_jd() -> dict:
+    return {"raw_text": ""}
+
+
+# ---------------------------------------------------------------------------
+# OUTPUT CONTRACT - what rank_candidates() hands back. This is the ONLY
+# structure P3 needs for the table, the top-3 cards, and the chat function.
+# ---------------------------------------------------------------------------
+#
+# rank_candidates(jd_analysis, candidates) -> list[dict], sorted best-first:
+#
+# {
+#   "rank": 1,
+#   "candidate_id": "candidate_07",
+#   "name": "resume7.pdf",
+#   "final_score": 91.4,
+#   "semantic_score": 93.2,
+#   "keyword_score": 89.7,
+#   "matched_required": ["react", "node.js"],
+#   "missing_required": ["aws"],
+#   "matched_preferred": ["docker"],
+#   "missing_preferred": [],
+#   "semantic_evidence": [
+#       {"requirement": "node.js", "score": 0.81, "snippet": "Built REST APIs..."}
+#   ],
+#   "preferred_semantic_evidence": [...],
+#   "score_breakdown": {
+#       "final_formula": "0.5*semantic + 0.5*keyword",
+#       "semantic_formula": "...",
+#       "keyword_formula": "...",
+#       "semantic_backend": "sentence-transformers/all-MiniLM-L6-v2" (or tfidf-fallback),
+#   },
+# }
