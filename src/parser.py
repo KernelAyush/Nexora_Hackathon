@@ -118,6 +118,7 @@ def split_resume_sections(text: str) -> dict:
     sections: dict = {}
     current_key = "header"  # anything before the first recognized heading
     buffer: List[str] = []
+    seen_any_content = False  # tracks whether we've buffered anything yet
 
     def flush():
         if buffer:
@@ -132,12 +133,25 @@ def split_resume_sections(text: str) -> dict:
             flush()
             buffer = []
             current_key = canon
+            seen_any_content = True
             continue
-        if current_key not in _CANONICAL_KEYS and _looks_like_heading(raw):
+        # Skip the fuzzy heading fallback for the very first non-blank line
+        # of the whole document: that's almost always the candidate's own
+        # name (e.g. "Sneha Reddy"), which is short and title-cased just
+        # like a real heading, and would otherwise get misread as a bogus
+        # section key instead of staying in the "header" preamble.
+        if (
+            current_key not in _CANONICAL_KEYS
+            and _looks_like_heading(raw)
+            and (seen_any_content or current_key != "header")
+        ):
             flush()
             buffer = []
             current_key = raw.lower().rstrip(":")
+            seen_any_content = True
             continue
+        if raw:
+            seen_any_content = True
         buffer.append(line)
     flush()
     return sections
@@ -226,7 +240,7 @@ _REQUIRED_MARKERS = [
 ]
 _PREFERRED_MARKERS = [
     "preferred", "nice to have", "nice-to-have", "good to have",
-    "bonus points", "bonus", "a plus", "is a plus",
+    "good-to-have", "bonus points", "bonus", "a plus", "is a plus",
 ]
 _RESPONSIBILITY_MARKERS = [
     "responsibilities", "what you'll do", "what you will do", "role overview", "key responsibilities",
@@ -262,11 +276,26 @@ _EDUCATION_REQ_RE_CASESENSITIVE = re.compile(
 _TRAILING_SECTION_MARKERS = [
     "what we offer", "benefits", "perks", "compensation", "salary",
     "how to apply", "about the company", "about us", "equal opportunity",
+    "soft skills",
 ]
 
 
 def _find_marker_span(text_lower: str, markers: List[str]) -> Optional[int]:
-    positions = [text_lower.find(m) for m in markers if m in text_lower]
+    """Find the earliest marker that begins a LINE (i.e. is a real section
+    heading), not one that merely appears as a substring anywhere in the
+    text. Without this restriction, a marker word appearing mid-sentence
+    -- e.g. "React (preferred)" inside a MUST-HAVE bullet -- gets mistaken
+    for the start of a "Preferred" section and silently misclassifies
+    everything after it as preferred/optional instead of required."""
+    positions = []
+    offset = 0
+    for line in text_lower.splitlines(keepends=True):
+        stripped = line.strip(" \t\x0c\x7f-:\u2022*")
+        for m in markers:
+            if stripped.startswith(m):
+                positions.append(offset + (len(line) - len(line.lstrip(" \t\x0c\x7f-:\u2022*"))))
+                break
+        offset += len(line)
     return min(positions) if positions else None
 
 
