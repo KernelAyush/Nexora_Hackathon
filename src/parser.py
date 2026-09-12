@@ -19,13 +19,13 @@ from typing import List, Optional
 from pypdf import PdfReader
 import pdfplumber
 
-from normalizer import (
+from src.normalizer import (
     clean_text,
     normalize_heading,
     extract_skills_from_text,
     find_all_dates,
 )
-from schemas import Candidate, JobDescription, empty_candidate
+from src.schemas import Candidate, JobDescription, empty_candidate
 
 
 # ---------------------------------------------------------------------------
