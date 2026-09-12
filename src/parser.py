@@ -233,11 +233,36 @@ _RESPONSIBILITY_MARKERS = [
 ]
 
 _EXPERIENCE_REQ_RE = re.compile(
-    r"(\d+\+?\s*(?:-\s*\d+)?\s*years?[^.\n]{0,40})", re.IGNORECASE
+    r"(\d+\+?\s*(?:-\s*\d+)?\s*years?[^.\n]{0,80})", re.IGNORECASE
 )
+# Negative lookahead (?![a-zA-Z]) after each alternative stops the pattern
+# from matching mid-word inside unrelated words -- e.g. without it,
+# "b.?e.?" matches the "Be" inside "Bengaluru" and swallows the rest of
+# that sentence as a bogus "education requirement".
+# Case-insensitive: for unambiguous multi-letter terms that don't collide
+# with ordinary English words.
 _EDUCATION_REQ_RE = re.compile(
-    r"((?:bachelor|b\.?tech|b\.?e\.?|master|m\.?tech|degree)[^.\n]{0,60})", re.IGNORECASE
+    r"((?:bachelor(?![a-zA-Z])|b\.?tech(?![a-zA-Z])|"
+    r"master(?![a-zA-Z])|m\.?tech(?![a-zA-Z])|degree(?![a-zA-Z]))[^.\n]{0,60})",
+    re.IGNORECASE,
 )
+# Case-SENSITIVE: "B.E."/"BE"/"M.E."/"ME" as bare 2-letter degree
+# abbreviations are indistinguishable from the common words "be"/"me" once
+# lowercased, so these only match when written in caps, as real resumes do
+# (e.g. "B.E Computer Science", "BE Mechanical") -- never against lowercase
+# prose like "...and be comfortable working...".
+_EDUCATION_REQ_RE_CASESENSITIVE = re.compile(
+    r"((?:B\.?E\.?|M\.?E\.?)(?![a-zA-Z])[^.\n]{0,60})"
+)
+
+# Headings that typically follow a responsibilities section in a JD --
+# used only to bound where the responsibilities slice ends, so unrelated
+# trailing content ("What We Offer", "Benefits", ...) doesn't get folded
+# into the responsibilities list.
+_TRAILING_SECTION_MARKERS = [
+    "what we offer", "benefits", "perks", "compensation", "salary",
+    "how to apply", "about the company", "about us", "equal opportunity",
+]
 
 
 def _find_marker_span(text_lower: str, markers: List[str]) -> Optional[int]:
@@ -271,11 +296,15 @@ def parse_jd(path: str) -> JobDescription:
     req_start = _find_marker_span(lowered, _REQUIRED_MARKERS)
     pref_start = _find_marker_span(lowered, _PREFERRED_MARKERS)
     resp_start = _find_marker_span(lowered, _RESPONSIBILITY_MARKERS)
+    trailing_start = _find_marker_span(lowered, _TRAILING_SECTION_MARKERS)
     all_starts = [s for s in (req_start, pref_start, resp_start) if s is not None]
+    # trailing_start only bounds slices (e.g. stops "responsibilities" from
+    # running into "what we offer") -- it isn't itself extracted as a block.
+    all_starts_with_trailing = all_starts + ([trailing_start] if trailing_start is not None else [])
 
-    required_block = _slice_after(normalized_text, req_start, all_starts)
-    preferred_block = _slice_after(normalized_text, pref_start, all_starts)
-    responsibilities_block = _slice_after(normalized_text, resp_start, all_starts)
+    required_block = _slice_after(normalized_text, req_start, all_starts_with_trailing)
+    preferred_block = _slice_after(normalized_text, pref_start, all_starts_with_trailing)
+    responsibilities_block = _slice_after(normalized_text, resp_start, all_starts_with_trailing)
 
     required_skills = extract_skills_from_text(required_block) if required_block else []
     preferred_skills = extract_skills_from_text(preferred_block) if preferred_block else []
@@ -288,7 +317,11 @@ def parse_jd(path: str) -> JobDescription:
         required_skills += [s for s in all_mentioned if s not in already]
 
     exp_match = _EXPERIENCE_REQ_RE.search(normalized_text)
-    edu_match = _EDUCATION_REQ_RE.search(normalized_text)
+    # Try the unambiguous case-insensitive terms first (bachelor/master/
+    # degree/b.tech/m.tech); only fall back to the case-sensitive bare
+    # "B.E."/"M.E." check if none of those were found.
+    edu_match = _EDUCATION_REQ_RE.search(normalized_text) or \
+        _EDUCATION_REQ_RE_CASESENSITIVE.search(normalized_text)
 
     role_title = ""
     for line in normalized_text.splitlines():
